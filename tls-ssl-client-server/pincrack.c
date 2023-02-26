@@ -1,3 +1,4 @@
+#include "pincrack.h"
 #include <sys/select.h>
 #include <sys/socket.h>
 #include <stdio.h>
@@ -15,9 +16,9 @@
 
 int pincrack(char *hash, int hashLength) {
 
-/* Here you will implement all logic:
-socket creation, communication with the server and returning
-the value to the caller of this function.
+/* Here you will implement all logic: 
+socket creation, communication with the server and returning 
+the value to the caller of this function. 
 */
 
    int    sd=-1, rc, bytesReceived;
@@ -65,7 +66,7 @@ the value to the caller of this function.
       // test error rc < 0
 
       //printf("send returned %d\n", rc);
-
+     
        bytesReceived = 0;
        while (bytesReceived < BUFFER_LENGTH) {
              rc = recv(sd, & buffer[bytesReceived],
