@@ -1,95 +1,225 @@
-#include "pincrack.h"
-#include <sys/select.h>
-#include <sys/socket.h>
 #include <stdio.h>
-#include <string.h>
-#include <netinet/in.h>
+#include <errno.h>
 #include <unistd.h>
-#include <netdb.h>   // gethostbyname()
-#include <arpa/inet.h>
+#include <malloc.h>
+#include <string.h>
+#include <sys/socket.h>
+#include <resolv.h>
+#include <netdb.h>
+#include <openssl/ssl.h>
+#include <openssl/err.h>
 
-#define SERVER_PORT     3005
-#define BUFFER_LENGTH    250
-#define FALSE              0
-#define SERVER_NAME     "localhost"
-#define MAX_HOST_NAME_LENGTH 20
+#define FAIL    -1
 
-int pincrack(char *hash, int hashLength) {
+void LoadCertificates(SSL_CTX* ctx, char* CertFile, char* KeyFile);
+int OpenConnection(const char *hostname, int port);
+void ShowCerts(SSL* ssl);
+SSL_CTX* InitCTX(void);
 
-/* Here you will implement all logic: 
-socket creation, communication with the server and returning 
-the value to the caller of this function. 
-*/
 
-   int    sd=-1, rc, bytesReceived;
-   char   buffer[BUFFER_LENGTH] = {};
-   char   server[MAX_HOST_NAME_LENGTH];
-   struct sockaddr_in serveraddr;
-   struct hostent *hostp;
-   int ret;
+int pincrack(int *hash, int hashlen) {
 
-   do   {
-      sd = socket(AF_INET, SOCK_STREAM, 0);
-      //test error sd < 0
+    char *hostname, *portnum;
+    char buf[1024];
+    SSL_CTX *ctx;
+    SSL *ssl;
+    int server;
+    int bytes;
+    int out = 0;
 
-      strcpy(server, SERVER_NAME);
 
-      memset(&serveraddr, 0, sizeof(serveraddr));
-      serveraddr.sin_family      = AF_INET;
-      serveraddr.sin_port        = htons(SERVER_PORT);
-      serveraddr.sin_addr.s_addr = inet_addr(server);
+    hostname= "localhost";
+    portnum= "3005";
 
-      if (serveraddr.sin_addr.s_addr == (unsigned long)INADDR_NONE)      {
-         hostp = gethostbyname(server);
-         if (hostp == (struct hostent *)NULL) {
-            printf("Host not found --> ");
-            break;
-         }
 
-         memcpy(&serveraddr.sin_addr,
-                hostp->h_addr,
-                sizeof(serveraddr.sin_addr));
-      }
+    printf("\nSSL Client 0.1\n~~~~~~~~~~~~~~~\n\n");
 
-      rc = connect(sd, (struct sockaddr *)&serveraddr, sizeof(serveraddr));
-      // test error rc < 0
 
-      printf("Connect ");
-      rc < 0 ? printf("Failed\n"): printf("Successful\n") ;
+    // Init. the SSL lib
+    SSL_library_init();
+    ctx = InitCTX();
 
-      //memset(buffer, 'a', sizeof(buffer));
-      //rc = send(sd, buffer, sizeof(buffer), 0);
-      //strcpy(buffer,"356a192b7913b04c54574d18c28d46e6395428ab");
-      strcpy(buffer, hash);
-      rc = send(sd, buffer, strlen(buffer), 0);
 
-      // test error rc < 0
+    printf("Client SSL lib init complete\n");
 
-      //printf("send returned %d\n", rc);
-     
-       bytesReceived = 0;
-       while (bytesReceived < BUFFER_LENGTH) {
-             rc = recv(sd, & buffer[bytesReceived],
-                    BUFFER_LENGTH - bytesReceived, 0);
-             // test error rc < 0 or rc == 0
-             //printf("bytes received %d\n", rc);
-             //printf("pin: ");
-             sscanf(buffer, "%d", &ret);
-             //for(int i = 0; i<rc;i++){
-             //  printf("%c", buffer[i]);
-             //}
-             //printf("\n");
 
-              bytesReceived += rc;
-        }
+    // Open the connection as normal
+    server = OpenConnection(hostname, atoi(portnum));
 
-   } while (FALSE);
 
-//    shutdown(sd, SHUT_RDWR);
+    // Create new SSL connection state
+    ssl = SSL_new(ctx);
 
-    if (sd != -1)
-      close(sd);
 
-    return ret;
+    // Attach the socket descriptor
+    SSL_set_fd(ssl, server);
 
-}
+
+    // Perform the connection
+    if ( SSL_connect(ssl) != FAIL ) {
+
+
+        char *msg = "Here is some data";
+
+
+        printf("Connected with %s encryption\n", SSL_get_cipher(ssl));
+
+        // Print any certs
+        ShowCerts(ssl);
+
+
+        // Encrypt & send message */
+        SSL_write(ssl, hash, hashlen);
+
+
+        // Get reply & decrypt
+        bytes = SSL_read(ssl, buf, sizeof(buf));
+
+        buf[bytes] = '\0'; //or mabye zero for later
+        printf("Received: '%s'\n\n", buf);
+
+        out = atoi(buf);
+
+        // Release connection state
+        SSL_free(ssl);
+
+
+    } // if
+
+
+    else ERR_print_errors_fp(stderr);
+
+
+    // Close socket
+    close(server);
+
+
+    // Release context
+    SSL_CTX_free(ctx);
+
+    return out;
+
+
+} // main
+
+
+SSL_CTX* InitCTX(void) {
+
+
+    SSL_METHOD const *method;
+    SSL_CTX *ctx;
+
+
+    // Load cryptos, et.al.
+    OpenSSL_add_all_algorithms();
+
+
+    // Bring in and register error messages
+    SSL_load_error_strings();
+
+
+    // Create new client-method instance
+    method = SSLv23_client_method();
+
+
+    // Create new context
+    ctx = SSL_CTX_new(method);
+
+
+    if ( ctx == NULL ) {
+
+
+        ERR_print_errors_fp(stderr);
+        abort();
+
+
+    } // if
+
+
+    return ctx;
+
+
+} //InitCTX
+
+
+int OpenConnection(const char *hostname, int port) {
+
+
+    int sd;
+    struct hostent *host;
+    struct sockaddr_in addr;
+
+
+    if ( (host = gethostbyname(hostname)) == NULL ) {
+
+
+        perror(hostname);
+        abort();
+
+
+    } // if
+
+
+    sd = socket(PF_INET, SOCK_STREAM, 0);
+    bzero(&addr, sizeof(addr));
+    addr.sin_family = AF_INET;
+    addr.sin_port = htons(port);
+    addr.sin_addr.s_addr = *(long*)(host->h_addr);
+
+
+    if ( connect(sd, (struct sockaddr*)&addr, sizeof(addr)) != 0 ) {
+
+
+        close(sd);
+        perror(hostname);
+        abort();
+
+
+    } // if
+
+
+    return sd;
+
+
+} // OpenConnection
+
+
+void ShowCerts(SSL* ssl) {
+
+
+    X509 *cert;
+    char *line;
+
+
+    cert = SSL_get_peer_certificate(ssl); /* get the server's certificate */
+
+
+    if ( cert != NULL ) {
+
+
+        printf("\nServer certificate:\n");
+        line = X509_NAME_oneline(X509_get_subject_name(cert), 0, 0);
+        printf("Subject: %s\n", line);
+
+
+        // Free the malloc'ed string
+        free(line);
+        line = X509_NAME_oneline(X509_get_issuer_name(cert), 0, 0);
+        printf("Issuer: %s\n", line);
+
+
+        // Free the malloc'ed string
+        free(line);
+
+
+        // Free the malloc'ed certificate copy
+        X509_free(cert);
+
+
+    } // if
+
+
+    else printf("No certificates.\n");
+
+
+} // ShowCerts
